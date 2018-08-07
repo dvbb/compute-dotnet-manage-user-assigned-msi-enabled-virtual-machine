@@ -1,10 +1,10 @@
 ---
 services: Compute
-platforms: .Net
+platforms: dotnet
 author: anuchandy
 ---
 
-# Getting Started with Compute - Manage User Assigned MSI Enabled Virtual Machine - in .Net #
+# Getting started on managing a virtual machine with User Assigned MSI using C# #
 
           Azure Compute sample for managing virtual machines -
            - Create a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group
@@ -18,7 +18,7 @@ author: anuchandy
 
 To run this sample:
 
-Set the environment variable `AZURE_AUTH_LOCATION` with the full path for an auth file. See [how to create an auth file](https://github.com/Azure/azure-sdk-for-net/blob/Fluent/AUTH.md).
+Set the environment variable `AZURE_AUTH_LOCATION` with the full path for an auth file. See [how to create an auth file](https://github.com/Azure/azure-libraries-for-java/blob/master/AUTH.md).
 
     git clone https://github.com/Azure-Samples/compute-dotnet-manage-user-assigned-msi-enabled-virtual-machine.git
 
