@@ -4,19 +4,19 @@ languages:
 - csharp
 products:
 - azure
-services: Compute
-platforms: dotnet
-author: yaohaizh
+extensions:
+- services: Compute
+- platforms: dotnet
 ---
 
 # Getting started on managing a virtual machine with User Assigned MSI using C# #
 
-          Azure Compute sample for managing virtual machines -
-           - Create a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group
-           - Create a Linux VM and associate it with User Assigned MSI
-               - Install Java8, Maven3 and GIT on the VM using Azure Custom Script Extension
-           - Run Java application in the MSI enabled Linux VM which uses MSI credentials to manage Azure resource
-           - Retrieve the Virtual machine created from the MSI enabled Linux VM.
+ Azure Compute sample for managing virtual machines -
+  - Create a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group
+  - Create a Linux VM and associate it with User Assigned MSI
+      - Install Java8, Maven3 and GIT on the VM using Azure Custom Script Extension
+  - Run Java application in the MSI enabled Linux VM which uses MSI credentials to manage Azure resource
+  - Retrieve the Virtual machine created from the MSI enabled Linux VM.
 
 
 ## Running this Sample ##
