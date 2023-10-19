@@ -15,13 +15,16 @@ using Azure.ResourceManager.Compute.Models;
 using Azure.ResourceManager.Compute;
 using System.Net.NetworkInformation;
 using System.Xml.Linq;
+using Azure.ResourceManager.Models;
+using Azure.ResourceManager.ManagedServiceIdentities;
 
 namespace ManageUserAssignedMSIEnabledVirtualMachine
 {
     public class Program
     {
-        private static ResourceIdentifier? _resourceGroupId = null;
-    
+        private static ResourceIdentifier? _resourceGroupId1 = null;
+        private static ResourceIdentifier? _resourceGroupId2 = null;
+
         /**
          * Azure Compute sample for managing virtual machines -
          *  - Create a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group
@@ -32,16 +35,31 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
          */
         public static async Task RunSample(ArmClient client)
         {
-            var rgName1 = "ComputeRG0000";
-            var rgName2 = Utilities.CreateRandomName("uamsi-rg-2");
-            var identityName = Utilities.CreateRandomName("id");
-            var linuxVMName = Utilities.CreateRandomName("VM1");
-            var pipName = Utilities.CreateRandomName("pip1");
-            var userName = Utilities.CreateUsername();
-            var password = Utilities.CreatePassword();
+            string rgName1 = Utilities.CreateRandomName("ComputeSampleRG-1-");
+            string rgName2 = Utilities.CreateRandomName("ComputeSampleRG-2-");
+            string userAssignedIdentityName = Utilities.CreateRandomName("identity");
+            string vnetName = Utilities.CreateRandomName("vnet");
+            string nicName = Utilities.CreateRandomName("nic");
+            string publicIpDnsLabel = Utilities.CreateRandomName("pip");
+            string linuxVMName = Utilities.CreateRandomName("VM");
 
             try
             {
+                // Get default subscription
+                SubscriptionResource subscription = await client.GetDefaultSubscriptionAsync();
+
+                // Create two resource groups in eastus
+                Utilities.Log($"creating resource group1...");
+                ArmOperation<ResourceGroupResource> rgLro1 = await subscription.GetResourceGroups().CreateOrUpdateAsync(WaitUntil.Completed, rgName1, new ResourceGroupData(AzureLocation.EastUS));
+                ResourceGroupResource resourceGroup1 = rgLro1.Value;
+                _resourceGroupId1 = resourceGroup1.Id;
+                Utilities.Log("Created a resource group with name: " + resourceGroup1.Data.Name);
+
+                ArmOperation<ResourceGroupResource> rgLro2 = await subscription.GetResourceGroups().CreateOrUpdateAsync(WaitUntil.Completed, rgName2, new ResourceGroupData(AzureLocation.EastUS));
+                ResourceGroupResource resourceGroup2 = rgLro2.Value;
+                _resourceGroupId2 = resourceGroup2.Id;
+                Utilities.Log("Created a resource group with name: " + resourceGroup2.Data.Name);
+
                 //============================================================================================
                 // Create a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group
 
@@ -51,23 +69,31 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
                     "https://raw.githubusercontent.com/Azure/azure-libraries-for-net/master/Samples/Asset/install_dotnet_git.sh"
                 };
 
-                Utilities.Log("Creating a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group");
+                Utilities.Log("Creating a User Assigned MSI with CONTRIBUTOR access to the resource group");
 
-                var resourceGroup1 = azure.ResourceGroups
-                        .Define(rgName1)
-                        .WithRegion(region)
-                        .Create();
+                {
+                    //// Create a managed identity in resourceGroup2
+                    //string userAssignedIdentityName = Utilities.CreateRandomName("identity");
+                    //ResourceIdentifier userIdentityId = new ResourceIdentifier($"{resourceGroup2.Id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{userAssignedIdentityName}");
 
-                var identity = azure.Identities
-                        .Define(identityName)
-                        .WithRegion(region)
-                        .WithNewResourceGroup(rgName2)
-                        .WithAccessTo(resourceGroup1.Id, BuiltInRole.Contributor)
-                        .Create();
+                    //var identityInput = new GenericResourceData(resourceGroup2.Data.Location);
+                    //var identityLro = await client.GetGenericResources().CreateOrUpdateAsync(WaitUntil.Completed, userIdentityId, identityInput);
+                }
 
-                Utilities.Log("Created Resource Group and User Assigned MSI");
+                UserAssignedIdentityData userAssignedIdentityInput = new UserAssignedIdentityData(resourceGroup2.Data.Location);
+                var identityLro = await resourceGroup2.GetUserAssignedIdentities().CreateOrUpdateAsync(WaitUntil.Completed, userAssignedIdentityName, userAssignedIdentityInput);
+                UserAssignedIdentityResource identity = identityLro.Value;
+                ;
+                //var identity = azure.Identities
+                //        .Define(identityName)
+                //        .WithRegion(region)
+                //        .WithNewResourceGroup(rgName2)
+                //        .WithAccessTo(resourceGroup1.Id, BuiltInRole.Contributor)
+                //        .Create();
 
-                Utilities.PrintResourceGroup(resourceGroup1);
+                Utilities.Log($"Created User Assigned MSI: {identity.Data.Location}-{identity.Id.ResourceGroupName}-{identity.Data.Name}");
+
+                //Utilities.PrintResourceGroup(resourceGroup1);
                 //StringBuilder info = new StringBuilder();
                 //info.Append("Identity: ").Append(resource.Id)
                 //.Append("\n\tName: ").Append(resource.Name)
@@ -86,33 +112,83 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
                 //
 
 
+                Utilities.Log("Pre-creating some resources that the VM depends on");
+
+                // Creating a virtual network
+                var vnet = await Utilities.CreateVirtualNetwork(resourceGroup2, vnetName);
+
+                // Creating public ip
+                var pip = await Utilities.CreatePublicIP(resourceGroup2, publicIpDnsLabel);
+
+                // Creating network interface
+                var nic = await Utilities.CreateNetworkInterface(resourceGroup2, vnet.Data.Subnets[0].Id, pip.Id, nicName);
+
                 Utilities.Log("Creating a Linux VM with MSI associated and install DotNet and Git");
 
-                var virtualMachine = azure.VirtualMachines
-                        .Define(linuxVMName)
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(rgName2)
-                        .WithNewPrimaryNetwork("10.0.0.0/28")
-                        .WithPrimaryPrivateIPAddressDynamic()
-                        .WithNewPrimaryPublicIPAddress(pipName)
-                        .WithPopularLinuxImage(KnownLinuxVirtualMachineImage.UbuntuServer16_04_Lts)
-                        .WithRootUsername(userName)
-                        .WithRootPassword(password)
-                        .WithSize(VirtualMachineSizeTypes.Parse("Standard_D2a_v4"))
-                        .WithExistingUserAssignedManagedServiceIdentity(identity)
-                        .DefineNewExtension("CustomScriptForLinux")
-                            .WithPublisher("Microsoft.OSTCExtensions")
-                            .WithType("CustomScriptForLinux")
-                            .WithVersion("1.4")
-                            .WithMinorVersionAutoUpgrade()
-                            .WithPublicSetting("fileUris", fileUris)
-                            .WithPublicSetting("commandToExecute", invokeScriptCommand)
-                            .Attach()
-                        .Create();
 
-                Utilities.Log("Created Linux VM");
+                VirtualMachineData linuxVMInput = new VirtualMachineData(resourceGroup2.Data.Location)
+                {
+                    HardwareProfile = new VirtualMachineHardwareProfile()
+                    {
+                        VmSize = VirtualMachineSizeType.StandardF2
+                    },
+                    StorageProfile = new VirtualMachineStorageProfile()
+                    {
+                        ImageReference = new ImageReference()
+                        {
+                            Publisher = "Canonical",
+                            Offer = "UbuntuServer",
+                            Sku = "16.04-LTS",
+                            Version = "latest",
+                        },
+                    },
+                    OSProfile = new VirtualMachineOSProfile()
+                    {
+                        AdminUsername = Utilities.CreateUsername(),
+                        AdminPassword = Utilities.CreatePassword(),
+                        ComputerName = linuxVMName,
+                    },
+                    NetworkProfile = new VirtualMachineNetworkProfile()
+                    {
+                        NetworkInterfaces =
+                        {
+                            new VirtualMachineNetworkInterfaceReference()
+                            {
+                                Id = nic.Id,
+                                Primary = true,
+                            }
+                        }
+                    },
+                };
+                // Add UserAssignedIdentity
+                linuxVMInput.Identity.UserAssignedIdentities.Add(identity.Id, new UserAssignedIdentity());
 
-                Utilities.PrintVirtualMachine(virtualMachine);
+                var linuxVmLro = await resourceGroup2.GetVirtualMachines().CreateOrUpdateAsync(WaitUntil.Completed, linuxVMName, linuxVMInput);
+                VirtualMachineResource linuxVM = linuxVmLro.Value;
+
+                Utilities.Log($"Created Linux VM: {linuxVM.Data.Name}");
+
+                // Use a VM extension to install Apache Web servers
+                // Definate vm extension input data
+                var extensionInput = new VirtualMachineExtensionData(resourceGroup2.Data.Location)
+                {
+                    Publisher = "Microsoft.OSTCExtensions",
+                    ExtensionType = "CustomScriptForLinux",
+                    TypeHandlerVersion = "1.4",
+                    AutoUpgradeMinorVersion = true,
+                    EnableAutomaticUpgrade = false,
+                    Settings = BinaryData.FromObjectAsJson(new
+                    {
+                        fileUris = fileUris
+                    }),
+                    ProtectedSettings = BinaryData.FromObjectAsJson(new
+                    {
+                        commandToExecute = invokeScriptCommand,
+                    }),
+                };
+                _ = await linuxVM.GetVirtualMachineExtensions().CreateOrUpdateAsync(WaitUntil.Completed, "CustomScriptForLinux", extensionInput);
+                Utilities.Log($"Use a VM extension to install Apache Web servers...");
+
 
                 //=============================================================
                 // Run Java application in the MSI enabled Linux VM which uses MSI credentials to manage Azure resource
@@ -123,10 +199,10 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
                 {
                     "git clone https://github.com/Azure-Samples/compute-dotnet-manage-vm-from-vm-with-msi-credentials.git",
                     "cd compute-dotnet-manage-vm-from-vm-with-msi-credentials",
-                    $"dotnet run {azure.SubscriptionId} {rgName1} {identity.ClientId}"
+                    $"dotnet run {identity.Id.SubscriptionId} {rgName1} {identity.Data.ClientId}"
                 };
 
-                RunCommandOnVM(azure, virtualMachine, commands);
+                await RunCommandOnVM(linuxVM, commands);
 
                 Utilities.Log("DotNet application executed");
 
@@ -135,10 +211,9 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
 
                 Utilities.Log("Retrieving the virtual machine created from the MSI enabled Linux VM");
 
-                var virtualMachines = azure.VirtualMachines.ListByResourceGroup(resourceGroup1.Name);
-                foreach (var vm in virtualMachines)
+                await foreach (var vm in resourceGroup2.GetVirtualMachines().GetAllAsync())
                 {
-                    Utilities.PrintVirtualMachine(vm);
+                    Utilities.Log(vm.Data.Name);//....todo
                 }
             }
             catch (Exception ex)
@@ -149,19 +224,18 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
             {
                 try
                 {
-                    if (_resourceGroupId is not null)
+                    if (_resourceGroupId1 is not null)
                     {
-                        Utilities.Log($"Deleting Resource Group: {_resourceGroupId}");
-                        await client.GetResourceGroupResource(_resourceGroupId).DeleteAsync(WaitUntil.Completed);
-                        Utilities.Log($"Deleted Resource Group: {_resourceGroupId}");
+                        Utilities.Log($"Deleting Resource Group: {_resourceGroupId1}");
+                        await client.GetResourceGroupResource(_resourceGroupId1).DeleteAsync(WaitUntil.Completed);
+                        Utilities.Log($"Deleted Resource Group: {_resourceGroupId1.Name}");
                     }
-                    Utilities.Log($"Deleting Resource Group: {rgName1}");
-                    azure.ResourceGroups.DeleteByName(rgName1);
-                    Utilities.Log($"Deleted Resource Group: {rgName1}");
-
-                    Utilities.Log($"Deleting Resource Group: {rgName2}");
-                    azure.ResourceGroups.DeleteByName(rgName2);
-                    Utilities.Log($"Deleted Resource Group: {rgName2}");
+                    if (_resourceGroupId2 is not null)
+                    {
+                        Utilities.Log($"Deleting Resource Group: {_resourceGroupId2}");
+                        await client.GetResourceGroupResource(_resourceGroupId2).DeleteAsync(WaitUntil.Completed);
+                        Utilities.Log($"Deleted Resource Group: {_resourceGroupId2.Name}");
+                    }
                 }
                 catch (NullReferenceException)
                 {
@@ -174,15 +248,17 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
             }
         }
 
-        private static RunCommandResultInner RunCommandOnVM(IAzure azure, IVirtualMachine virtualMachine, List<String> commands)
+        private static async Task<VirtualMachineRunCommandResult> RunCommandOnVM(VirtualMachineResource virtualMachine, List<String> commands)
         {
-            RunCommandInput runParams = new RunCommandInput()
+            RunCommandInput runParams = new RunCommandInput("RunShellScript");
+            foreach (var commoand in commands)
             {
-                CommandId = "RunShellScript",
-                Script = commands
-            };
-            return azure.VirtualMachines
-                    .RunCommandAsync(virtualMachine.ResourceGroupName, virtualMachine.Name, runParams).Result;
+                runParams.Script.Add(commoand);
+
+            }
+
+            var result = await virtualMachine.RunCommandAsync(WaitUntil.Completed, runParams);
+            return result.Value;
         }
 
         public static async Task Main(string[] args)
