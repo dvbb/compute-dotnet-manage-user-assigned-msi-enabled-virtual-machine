@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 
 # install DotNet
 curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
