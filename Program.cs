@@ -17,6 +17,9 @@ using System.Net.NetworkInformation;
 using System.Xml.Linq;
 using Azure.ResourceManager.Models;
 using Azure.ResourceManager.ManagedServiceIdentities;
+using Azure.ResourceManager.Authorization;
+using static System.Formats.Asn1.AsnWriter;
+using Azure.ResourceManager.Authorization.Models;
 
 namespace ManageUserAssignedMSIEnabledVirtualMachine
 {
@@ -63,54 +66,41 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
                 //============================================================================================
                 // Create a Resource Group and User Assigned MSI with CONTRIBUTOR access to the resource group
 
-                var invokeScriptCommand = "bash install_dotnet_git.sh";
-                List<string> fileUris = new List<string>()
-                {
-                    "https://raw.githubusercontent.com/Azure/azure-libraries-for-net/master/Samples/Asset/install_dotnet_git.sh"
-                };
-
-                Utilities.Log("Creating a User Assigned MSI with CONTRIBUTOR access to the resource group");
-
-                {
-                    //// Create a managed identity in resourceGroup2
-                    //string userAssignedIdentityName = Utilities.CreateRandomName("identity");
-                    //ResourceIdentifier userIdentityId = new ResourceIdentifier($"{resourceGroup2.Id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{userAssignedIdentityName}");
-
-                    //var identityInput = new GenericResourceData(resourceGroup2.Data.Location);
-                    //var identityLro = await client.GetGenericResources().CreateOrUpdateAsync(WaitUntil.Completed, userIdentityId, identityInput);
-                }
-
+                // Create a UserAssigned Identity in resourceGroup2
                 UserAssignedIdentityData userAssignedIdentityInput = new UserAssignedIdentityData(resourceGroup2.Data.Location);
                 var identityLro = await resourceGroup2.GetUserAssignedIdentities().CreateOrUpdateAsync(WaitUntil.Completed, userAssignedIdentityName, userAssignedIdentityInput);
                 UserAssignedIdentityResource identity = identityLro.Value;
-                ;
-                //var identity = azure.Identities
-                //        .Define(identityName)
-                //        .WithRegion(region)
-                //        .WithNewResourceGroup(rgName2)
-                //        .WithAccessTo(resourceGroup1.Id, BuiltInRole.Contributor)
-                //        .Create();
+                Utilities.Log($"Created User Assigned MSI:");
+                Utilities.Log("\tName: " + identity.Data.Name);
+                Utilities.Log("\tPrincipalId: " + identity.Data.PrincipalId);
+                Utilities.Log("\tClientId: " + identity.Data.ClientId);
+                Utilities.Log("\tTenantId: " + identity.Data.TenantId);
 
-                Utilities.Log($"Created User Assigned MSI: {identity.Data.Location}-{identity.Id.ResourceGroupName}-{identity.Data.Name}");
-
-                //Utilities.PrintResourceGroup(resourceGroup1);
-                //StringBuilder info = new StringBuilder();
-                //info.Append("Identity: ").Append(resource.Id)
-                //.Append("\n\tName: ").Append(resource.Name)
-                //        .Append("\n\tRegion: ").Append(resource.Region)
-                //        .Append("\n\tTags: ").Append(resource.Tags.ToString())
-                //        .Append("\n\tService Principal Id: ").Append(resource.PrincipalId)
-                //        .Append("\n\tClient Id: ").Append(resource.ClientId)
-                //        .Append("\n\tTenant Id: ").Append(resource.TenantId)
-                //        .Append("\n\tClient Secret Url: ").Append(resource.ClientSecretUrl);
+                // Add a contributor role to resourceGroup1 for above UserAssignedIdentity
+                // `b24988ac-6180-42a0-ab88-20f7382dd24c` is contributor role definition name
+                ResourceIdentifier scopeId = resourceGroup1.Id;
+                string roleAssignmentName = Guid.NewGuid().ToString();
+                RoleAssignmentCreateOrUpdateContent content = new RoleAssignmentCreateOrUpdateContent(
+                    roleDefinitionId: new ResourceIdentifier($"{subscription.Id}/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"),
+                    principalId: identity.Data.PrincipalId.Value)
+                {
+                    PrincipalType = RoleManagementPrincipalType.ServicePrincipal
+                };
+                var roleAssignmentLro = await client.GetRoleAssignments(scopeId).CreateOrUpdateAsync(WaitUntil.Completed, roleAssignmentName, content);
+                RoleAssignmentResource roleAssignment = roleAssignmentLro.Value;
+                Utilities.Log("Created contribute role in resourceGroup1:");
+                Utilities.Log("\tName: " + roleAssignment.Data.Name);
+                Utilities.Log("\tPrincipalType: " + roleAssignment.Data.PrincipalType);
+                Utilities.Log("\tScope: " + roleAssignment.Data.Scope);
+                Utilities.Log("\tPrincipalId: " + roleAssignment.Data.PrincipalId);
 
                 //============================================================================================
                 // Create a Linux VM and associate it with User Assigned MSI
                 // Install DontNet and Git on the VM using Azure Custom Script Extension
 
-                // The script to install DontNet and Git on a virtual machine using Azure Custom Script Extension
-                //
+                Utilities.Log("Creating a User Assigned MSI with CONTRIBUTOR access to the resource group");
 
+                // The script to install DontNet and Git on a virtual machine using Azure Custom Script Extension
 
                 Utilities.Log("Pre-creating some resources that the VM depends on");
 
@@ -161,6 +151,7 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
                     },
                 };
                 // Add UserAssignedIdentity
+                linuxVMInput.Identity = new ManagedServiceIdentity(ManagedServiceIdentityType.SystemAssignedUserAssigned);
                 linuxVMInput.Identity.UserAssignedIdentities.Add(identity.Id, new UserAssignedIdentity());
 
                 var linuxVmLro = await resourceGroup2.GetVirtualMachines().CreateOrUpdateAsync(WaitUntil.Completed, linuxVMName, linuxVMInput);
@@ -170,6 +161,11 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
 
                 // Use a VM extension to install Apache Web servers
                 // Definate vm extension input data
+                var invokeScriptCommand = "bash install_dotnet_git.sh";
+                List<string> fileUris = new List<string>()
+                {
+                    "https://raw.githubusercontent.com/dvbb/compute-dotnet-manage-user-assigned-msi-enabled-virtual-machine/master/Asset/install_dotnet_git.sh"
+                };
                 var extensionInput = new VirtualMachineExtensionData(resourceGroup2.Data.Location)
                 {
                     Publisher = "Microsoft.OSTCExtensions",
@@ -179,12 +175,9 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
                     EnableAutomaticUpgrade = false,
                     Settings = BinaryData.FromObjectAsJson(new
                     {
-                        fileUris = fileUris
-                    }),
-                    ProtectedSettings = BinaryData.FromObjectAsJson(new
-                    {
+                        fileUris = fileUris,
                         commandToExecute = invokeScriptCommand,
-                    }),
+                    })
                 };
                 _ = await linuxVM.GetVirtualMachineExtensions().CreateOrUpdateAsync(WaitUntil.Completed, "CustomScriptForLinux", extensionInput);
                 Utilities.Log($"Use a VM extension to install Apache Web servers...");
@@ -213,7 +206,13 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
 
                 await foreach (var vm in resourceGroup2.GetVirtualMachines().GetAllAsync())
                 {
-                    Utilities.Log(vm.Data.Name);//....todo
+                    Utilities.Log("vm name:" + vm.Data.Name);
+                    Utilities.Log("UserAssignedIdentities count:" + vm.Data.Identity.UserAssignedIdentities.Count);
+                    Utilities.Log("UserAssignedIdentities:");
+                    foreach (var item in vm.Data.Identity.UserAssignedIdentities)
+                    {
+                        Utilities.Log("\t" + item.Key);
+                    }
                 }
             }
             catch (Exception ex)
@@ -254,7 +253,6 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
             foreach (var commoand in commands)
             {
                 runParams.Script.Add(commoand);
-
             }
 
             var result = await virtualMachine.RunCommandAsync(WaitUntil.Completed, runParams);
