@@ -115,7 +115,6 @@ namespace ManageUserAssignedMSIEnabledVirtualMachine
 
                 Utilities.Log("Creating a Linux VM with MSI associated and install DotNet and Git");
 
-
                 VirtualMachineData linuxVMInput = new VirtualMachineData(resourceGroup2.Data.Location)
                 {
                     HardwareProfile = new VirtualMachineHardwareProfile()
